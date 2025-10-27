@@ -18,6 +18,9 @@ struct AgentNode {
     var onTap: (() -> Void)?
     var onLongPress: (() -> Void)?
     var onChangeText: ((String) -> Void)?
+    var onSwipe: ((String, String) -> Void)? // direction, velocity
+    var scrollViewProxy: Any? // Will hold ScrollViewProxy for programmatic scrolling
+    var scrollPosition: CGPoint = .zero // Track scroll position for relative scrolling
 }
 
 class AgentRegistry {
@@ -141,6 +144,7 @@ struct AgentCommand: Codable {
     let value: String?
     let direction: String?
     let amount: Double?
+    let velocity: String?
 }
 
 struct AgentResponse: Codable {
@@ -396,6 +400,22 @@ class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDele
             let success = simulateLongPress(testID: testID)
             return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
 
+        case "scroll":
+            guard let testID = command.testID, let direction = command.direction else {
+                return AgentResponse(id: command.id, status: "error", error: "Missing testID or direction", action: command.action)
+            }
+            let amount = command.amount ?? 100.0
+            let success = simulateScroll(testID: testID, direction: direction, amount: amount)
+            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+
+        case "swipe":
+            guard let testID = command.testID, let direction = command.direction else {
+                return AgentResponse(id: command.id, status: "error", error: "Missing testID or direction", action: command.action)
+            }
+            let velocity = command.velocity ?? "medium"
+            let success = simulateSwipe(testID: testID, direction: direction, velocity: velocity)
+            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+
         default:
             return AgentResponse(id: command.id, status: "error", error: "Unknown action: \(command.action)", action: command.action)
         }
@@ -504,6 +524,141 @@ func simulateLongPress(testID: String) -> Bool {
     }
 
     print("simulateLongPress: No onLongPress handler found for testID \"\(testID)\"")
+    return false
+}
+
+@MainActor
+func simulateScroll(testID: String, direction: String, amount: Double) -> Bool {
+    guard var node = AgentRegistry.shared.getNode(testID: testID) else {
+        return false
+    }
+
+    // Try to get the UIScrollView from the stored reference
+    var scrollView: UIScrollView?
+    if let view = node.view as? UIScrollView {
+        scrollView = view
+    } else {
+        // Fallback: try to find it in the view hierarchy
+        scrollView = findScrollView(testID: testID)
+    }
+
+    guard let scrollView = scrollView else {
+        print("simulateScroll: ERROR - No UIScrollView found for testID \"\(testID)\"")
+        return false
+    }
+
+    // Calculate relative scroll offset
+    let deltaX = direction == "right" ? CGFloat(amount) : direction == "left" ? -CGFloat(amount) : 0
+    let deltaY = direction == "down" ? CGFloat(amount) : direction == "up" ? -CGFloat(amount) : 0
+
+    // Get current offset
+    let currentOffset = scrollView.contentOffset
+
+    // Calculate new offset (relative scrolling)
+    let newX = max(0, min(scrollView.contentSize.width - scrollView.bounds.width, currentOffset.x + deltaX))
+    let newY = max(0, min(scrollView.contentSize.height - scrollView.bounds.height, currentOffset.y + deltaY))
+    let newOffset = CGPoint(x: newX, y: newY)
+
+    // Update tracked position
+    node.scrollPosition = newOffset
+    AgentRegistry.shared.register(testID: testID, node: node)
+
+    // Perform the scroll
+    scrollView.setContentOffset(newOffset, animated: true)
+
+    print("simulateScroll: Scrolled from (\(currentOffset.x), \(currentOffset.y)) to (\(newOffset.x), \(newOffset.y))")
+    return true
+}
+
+// Helper function to find UIScrollView in the view hierarchy
+@MainActor
+private func findScrollView(testID: String) -> UIScrollView? {
+    // Get the root view from the active window scene
+    guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = scene.windows.first(where: { $0.isKeyWindow }),
+          let rootView = window.rootViewController?.view else {
+        return nil
+    }
+
+    // Find all ScrollViews in the hierarchy
+    let allScrollViews = findAllScrollViews(in: rootView)
+    // Find all ScrollViews that contain the testID
+    var candidates: [(scrollView: UIScrollView, area: CGFloat)] = []
+    for (index, scrollView) in allScrollViews.enumerated() {
+        if containsTestID(testID, in: scrollView) {
+            let area = scrollView.bounds.width * scrollView.bounds.height
+            candidates.append((scrollView, area))
+        }
+    }
+
+    // Return the smallest ScrollView (innermost) that contains the testID
+    if let smallest = candidates.min(by: { $0.area < $1.area }) {
+        return smallest.scrollView
+    }
+
+    return nil
+}
+
+@MainActor
+private func findAllScrollViews(in view: UIView) -> [UIScrollView] {
+    var scrollViews: [UIScrollView] = []
+
+    // Check if this view is a ScrollView
+    if let scrollView = view as? UIScrollView {
+        scrollViews.append(scrollView)
+    }
+
+    // Recursively search all subviews
+    for subview in view.subviews {
+        scrollViews.append(contentsOf: findAllScrollViews(in: subview))
+    }
+
+    return scrollViews
+}
+
+@MainActor
+private func containsTestID(_ testID: String, in view: UIView) -> Bool {
+    // Check if this view has the testID
+    if let identifier = view.accessibilityIdentifier {
+        print("containsTestID: Found view with accessibilityIdentifier '\(identifier)', looking for '\(testID)'")
+        if identifier == testID {
+            print("containsTestID: MATCH FOUND!")
+            return true
+        }
+    }
+
+    // Recursively check all subviews
+    for subview in view.subviews {
+        if containsTestID(testID, in: subview) {
+            return true
+        }
+    }
+
+    return false
+}
+
+@MainActor
+func simulateSwipe(testID: String, direction: String, velocity: String) -> Bool {
+    guard let node = AgentRegistry.shared.getNode(testID: testID) else {
+        print("simulateSwipe: No node found for testID \"\(testID)\"")
+        return false
+    }
+
+    // First check if there's an explicit onSwipe handler
+    if let onSwipe = node.onSwipe {
+        onSwipe(direction, velocity)
+        return true
+    }
+
+    // Fallback: if it's a scrollable view without explicit swipe handler,
+    // convert swipe to scroll
+    if node.scrollViewProxy != nil {
+        let velocityMap: [String: Double] = ["slow": 300, "medium": 600, "fast": 1200]
+        let distance = velocityMap[velocity] ?? 600
+        return simulateScroll(testID: testID, direction: direction, amount: distance)
+    }
+
+    print("simulateSwipe: No swipe handler or scroll support found for testID \"\(testID)\"")
     return false
 }
 
