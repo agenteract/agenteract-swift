@@ -96,6 +96,35 @@ class LogBuffer {
     }
 }
 
+// MARK: - Config Storage
+
+struct AgenteractConfig: Codable {
+    let host: String
+    let port: Int
+    let token: String?
+}
+
+class ConfigStorage {
+    static let shared = ConfigStorage()
+    private let key = "com.agenteract.config"
+
+    func save(config: AgenteractConfig) {
+        if let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: key)
+            print("[Agenteract] Config saved: \(config.host):\(config.port)")
+        }
+    }
+
+    func load() -> AgenteractConfig? {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let config = try? JSONDecoder().decode(AgenteractConfig.self, from: data) else {
+            return nil
+        }
+        print("[Agenteract] Loaded config: \(config.host):\(config.port)")
+        return config
+    }
+}
+
 // MARK: - Device Info
 
 struct DeviceInfo: Codable {
@@ -295,10 +324,14 @@ class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDele
     private var session: URLSession?
     private let projectName: String
     private var reconnectTimer: Timer?
+    private var config: AgenteractConfig?
 
     init(projectName: String) {
         self.projectName = projectName
         super.init()
+
+        // Load saved config
+        self.config = ConfigStorage.shared.load()
 
         let configuration = URLSessionConfiguration.default
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: OperationQueue())
@@ -306,10 +339,39 @@ class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDele
         connect()
     }
 
+    func updateConfig(_ newConfig: AgenteractConfig) {
+        self.config = newConfig
+        ConfigStorage.shared.save(config: newConfig)
+
+        // Reconnect with new config
+        disconnect()
+        connect()
+    }
+
     func connect() {
         guard webSocketTask == nil else { return }
 
-        let urlString = "ws://127.0.0.1:8765/\(projectName)"
+        // Use saved config if available, otherwise default to localhost
+        let host: String
+        let port: Int
+        let token: String?
+
+        if let savedConfig = config {
+            host = savedConfig.host
+            port = savedConfig.port
+            token = savedConfig.token
+        } else {
+            host = "127.0.0.1"
+            port = 8765
+            token = nil
+        }
+
+        // Build URL with token if available
+        var urlString = "ws://\(host):\(port)/\(projectName)"
+        if let token = token {
+            urlString += "?token=\(token)"
+        }
+
         guard let url = URL(string: urlString) else {
             print("Invalid WebSocket URL")
             return
@@ -318,7 +380,8 @@ class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDele
         webSocketTask = session?.webSocketTask(with: url)
         webSocketTask?.resume()
 
-        print("Connecting to agent server at \(urlString)...")
+        let maskedUrl = urlString.replacingOccurrences(of: #"token=[^&]+"#, with: "token=***", options: .regularExpression)
+        print("Connecting to agent server at \(maskedUrl)...")
         receiveMessage()
     }
 
@@ -911,9 +974,52 @@ public struct AgentDebugBridge: View {
 
     public var body: some View {
         EmptyView()
+            .onOpenURL { url in
+                handleDeepLink(url)
+            }
             .onDisappear {
                 webSocketManager.disconnect()
                 logSocketManager.disconnect()
             }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        print("[Agenteract] Received deep link: \(url)")
+
+        // Check if this is an agenteract config link
+        // Supports: myapp://agenteract/config?host=...&port=...&token=...
+        guard url.pathComponents.contains("agenteract"),
+              url.pathComponents.contains("config") else {
+            return
+        }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            print("[Agenteract] Failed to parse deep link URL")
+            return
+        }
+
+        var host: String?
+        var port: Int?
+        var token: String?
+
+        for item in queryItems {
+            switch item.name {
+            case "host": host = item.value
+            case "port": port = Int(item.value ?? "")
+            case "token": token = item.value
+            default: break
+            }
+        }
+
+        guard let host = host, let port = port else {
+            print("[Agenteract] Missing required parameters in deep link")
+            return
+        }
+
+        let config = AgenteractConfig(host: host, port: port, token: token)
+        webSocketManager.updateConfig(config)
+
+        print("[Agenteract] Config updated from deep link")
     }
 }

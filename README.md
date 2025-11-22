@@ -34,9 +34,47 @@ Or in Xcode:
 2. Enter the repository URL: `https://github.com/agenteract/agenteract-swift`
 3. Select the version you want to use
 
-## Usage
+## Quick Start
 
-### 1. Add the Agent Debug Bridge
+### 1. Configure URL Scheme for Deep Linking
+
+To enable deep link pairing with physical devices, configure your app's URL scheme:
+
+**Option A: In Info.plist**
+
+Add this to your `Info.plist`:
+
+```xml
+<key>CFBundleURLTypes</key>
+<array>
+    <dict>
+        <key>CFBundleTypeRole</key>
+        <string>Editor</string>
+        <key>CFBundleURLName</key>
+        <string>com.yourcompany.yourapp</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>yourapp</string>
+        </array>
+    </dict>
+</array>
+```
+
+**Option B: In Xcode**
+
+1. Select your project in the Project Navigator
+2. Select your app target
+3. Go to the **Info** tab
+4. Expand **URL Types**
+5. Click **+** to add a new URL type
+6. Fill in:
+   - **Identifier**: `com.yourcompany.yourapp` (typically your bundle ID)
+   - **URL Schemes**: `yourapp` (e.g., `myapp`, `agenteract-swift-example`)
+   - **Role**: `Editor`
+
+**Important:** The URL scheme should be unique to your app and match what you'll use in the CLI connect command.
+
+### 2. Add the Agent Debug Bridge
 
 Add the `AgentDebugBridge` to your root view to enable agent communication:
 
@@ -58,7 +96,12 @@ struct ContentView: View {
 
 The `projectName` should match the name in your `agenteract.config.js`.
 
-### 2. Add Agent Bindings to Your Views
+**Note:** The `AgentDebugBridge` automatically:
+- Listens for deep link configuration (no additional code needed)
+- Saves connection settings to UserDefaults
+- Reconnects automatically when the app launches
+
+### 3. Add Agent Bindings to Your Views
 
 Use the `.agentBinding()` modifier or convenience wrappers to make views agent-controllable:
 
@@ -95,7 +138,33 @@ AgentTextField(
 )
 ```
 
-### 3. Use the Logger
+### 4. Connect Your Device
+
+**For Simulators (Automatic):**
+Simulators automatically connect to `ws://127.0.0.1:8765` - no setup needed!
+
+**For Physical Devices (Deep Link Pairing):**
+
+1. Configure your app in the CLI:
+   ```bash
+   pnpm agenteract add-config . my-app native --scheme yourapp
+   ```
+
+2. Start the dev server:
+   ```bash
+   pnpm agenteract dev
+   ```
+
+3. Connect your device:
+   ```bash
+   pnpm agenteract connect
+   ```
+
+4. Scan the QR code with your device camera, or select your device from the list
+
+The app will receive the deep link, save the configuration, and connect automatically!
+
+### 5. Use the Logger (Optional)
 
 Send logs to both Xcode console and the agent server:
 
@@ -106,6 +175,58 @@ AppLogger.info("User logged in")
 AppLogger.error("Failed to fetch data")
 AppLogger.debug("Cache hit for key: \(key)")
 ```
+
+## Deep Linking & Configuration
+
+### How Deep Link Pairing Works
+
+1. **CLI generates URL**: When you run `pnpm agenteract connect yourapp`, the CLI generates a deep link:
+   ```
+   yourapp://agenteract/config?host=192.168.1.5&port=8765&token=abc123
+   ```
+
+2. **Device receives link**: The deep link opens your app (via QR code scan or simulator injection)
+
+3. **App parses config**: `AgentDebugBridge` automatically catches the URL and extracts:
+   - `host`: Server IP address
+   - `port`: WebSocket port (usually 8765)
+   - `token`: Authentication token
+
+4. **Config persists**: Settings are saved to `UserDefaults` automatically
+
+5. **Auto-reconnect**: Future app launches use the saved config
+
+### URL Scheme Format
+
+Your app must be configured to handle deep links in the format:
+```
+<your-scheme>://agenteract/config?host=<ip>&port=<port>&token=<token>
+```
+
+Where `<your-scheme>` matches the URL scheme you configured in Info.plist/Xcode.
+
+### Security
+
+- **Localhost connections**: No token required for simulators (connects to `127.0.0.1`)
+- **Remote connections**: Token authentication required for physical devices
+- **Token storage**: Tokens are stored securely in UserDefaults
+- **Manual override**: Users can always reconfigure by scanning a new QR code
+
+### Troubleshooting Deep Links
+
+**App doesn't open when scanning QR code:**
+- Verify URL scheme is configured in Info.plist
+- Check that the scheme matches what you used in `add-config --scheme`
+- On iOS 14+, you may need to approve the deep link prompt
+
+**Connection fails after deep linking:**
+- Check that the agent server is running
+- Verify you're on the same network as the server
+- Look for connection errors in Xcode console
+
+**Want to reset configuration:**
+- Simply scan a new QR code to update settings
+- Or clear UserDefaults: `UserDefaults.standard.removeObject(forKey: "com.agenteract.config")`
 
 ## Key Concepts
 
@@ -166,10 +287,17 @@ See the [swift-app example](../../examples/swift-app) for a complete working imp
 
 ### Agent server not connecting
 
+**For Simulators:**
 Make sure:
-1. The agent server is running (`pnpm agenterserve dev`)
+1. The agent server is running (`pnpm agenteract dev`)
 2. Your `projectName` matches the config
-3. You're running on localhost/simulator (WebSocket connects to `127.0.0.1:8765`)
+3. Simulator automatically connects to `127.0.0.1:8765` (no deep linking needed)
+
+**For Physical Devices:**
+1. Ensure you've completed deep link pairing (`pnpm agenteract connect`)
+2. Verify the app received and saved the configuration (check Xcode console for `[Agenteract] Config saved`)
+3. Confirm you're on the same WiFi network as your development machine
+4. Check for authentication errors in the agent server logs
 
 ### View hierarchy is empty
 
