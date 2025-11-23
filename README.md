@@ -76,8 +76,23 @@ Add this to your `Info.plist`:
 
 ### 2. Add the Agent Debug Bridge
 
-Add the `AgentDebugBridge` to your root view to enable agent communication:
+Add the `AgentDebugBridge` to your root view to enable agent communication. **No additional setup is required in your App struct** - just add it to your main view:
 
+**App.swift (Standard SwiftUI - No special setup needed):**
+```swift
+import SwiftUI
+
+@main
+struct YourApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+```
+
+**ContentView.swift (Add AgentDebugBridge here):**
 ```swift
 import SwiftUI
 import Agenteract
@@ -96,10 +111,14 @@ struct ContentView: View {
 
 The `projectName` should match the name in your `agenteract.config.js`.
 
-**Note:** The `AgentDebugBridge` automatically:
-- Listens for deep link configuration (no additional code needed)
-- Saves connection settings to UserDefaults
-- Reconnects automatically when the app launches
+**Important:** The `AgentDebugBridge` automatically handles everything internally:
+- Deep link configuration handling (no code needed in your App struct)
+- WebSocket connection management (single connection for commands and logs)
+- Saving connection settings to UserDefaults
+- Auto-reconnection when the app launches
+- Log streaming over the main WebSocket connection
+
+You don't need to create WebSocket managers, handle deep links manually, or add any code to your App struct.
 
 ### 3. Add Agent Bindings to Your Views
 
@@ -280,8 +299,8 @@ See the [swift-app example](../../examples/swift-app) for a complete working imp
 ## Architecture
 
 - **AgentBinding.swift**: View modifiers and convenience wrappers for marking views as agent-controllable
-- **AgentDebugBridge.swift**: WebSocket communication, command handling, and view hierarchy inspection
-- **Logger.swift**: Logging utility that sends logs to both Xcode and the agent server
+- **AgentDebugBridge.swift**: Manages a single WebSocket connection for all communication (commands, hierarchy, logs), handles deep link configuration, and persists settings
+- **Logger.swift**: Logging utility that sends logs to both Xcode console and the agent server via the main WebSocket connection
 
 ## Troubleshooting
 
