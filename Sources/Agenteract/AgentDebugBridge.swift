@@ -102,11 +102,13 @@ public struct AgenteractConfig: Codable {
     public let host: String
     public let port: Int
     public let token: String?
+    public var deviceId: String?
 
-    public init(host: String, port: Int, token: String?) {
+    public init(host: String, port: Int, token: String?, deviceId: String? = nil) {
         self.host = host
         self.port = port
         self.token = token
+        self.deviceId = deviceId
     }
 }
 
@@ -212,9 +214,11 @@ struct ViewNode: Codable {
     let children: [ViewNode]
 }
 
-// MARK: - Log WebSocket Manager
+// MARK: - WebSocket Manager
 
-public class AgentLogSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
+public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
+    @Published var isConnected = false
+
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private let projectName: String
@@ -241,157 +245,6 @@ public class AgentLogSocketManager: NSObject, ObservableObject, URLSessionWebSoc
 
     public func updateConfig(_ newConfig: AgenteractConfig) {
         self.config = newConfig
-
-        // Reconnect with new config
-        disconnect()
-        connect()
-    }
-
-    func connect() {
-        guard webSocketTask == nil else { return }
-
-        // Use saved config if available
-        let host: String
-        let port: Int
-        let token: String?
-
-        if let savedConfig = config {
-            host = savedConfig.host
-            port = savedConfig.port + 2 // Log server is +2 from main port
-            token = savedConfig.token
-            print("[Agenteract] Log server using saved config: \(host):\(port)")
-        } else {
-            // No saved config - check if we're on simulator
-            let deviceInfo = DeviceInfoProvider.getDeviceInfo()
-
-            if deviceInfo.isSimulator {
-                // Simulator - use localhost
-                host = "127.0.0.1"
-                port = 8767
-                token = nil
-                print("[Agenteract] Log server: Simulator detected. Connecting to localhost...")
-            } else {
-                // Physical device - don't auto-connect
-                print("[Agenteract] Log server: Physical device detected. Use 'agenteract connect' to pair.")
-                return
-            }
-        }
-
-        // Build URL with token if available
-        var urlString = "ws://\(host):\(port)/\(projectName)"
-        if let token = token {
-            urlString += "?token=\(token)"
-        }
-
-        guard let url = URL(string: urlString) else {
-            print("[Agenteract] Invalid Log WebSocket URL")
-            return
-        }
-
-        webSocketTask = session?.webSocketTask(with: url)
-        webSocketTask?.resume()
-
-        let maskedUrl = urlString.replacingOccurrences(of: #"token=[^&]+"#, with: "token=***", options: .regularExpression)
-        print("[Agenteract] Connecting to log server at \(maskedUrl)...")
-        receiveMessage()
-    }
-
-    func disconnect() {
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        webSocketTask = nil
-        reconnectTimer?.invalidate()
-        reconnectTimer = nil
-    }
-
-    private func receiveMessage() {
-        webSocketTask?.receive { [weak self] result in
-            switch result {
-            case .success(let message):
-                // The log server doesn't send messages, but we need the receive
-                // loop to detect failures. We'll log if we get anything unexpected.
-                print("Received unexpected message on log socket: \(message)")
-                self?.receiveMessage() // Continue listening
-
-            case .failure(let error):
-                print("Log WebSocket receive error: \(error.localizedDescription)")
-                self?.scheduleReconnect()
-            }
-        }
-    }
-
-    private func sendLogEntry(_ entry: LogEntry) {
-        let response = AgentResponse(
-            id: nil,
-            status: "log",
-            logs: [entry]
-        )
-        sendResponse(response)
-    }
-
-    private func sendResponse(_ response: AgentResponse) {
-        guard let data = try? JSONEncoder().encode(response),
-              let text = String(data: data, encoding: .utf8) else {
-            print("Failed to encode log response")
-            return
-        }
-
-        webSocketTask?.send(.string(text)) { error in
-            if let error = error {
-                print("Log WebSocket send error: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func scheduleReconnect() {
-        DispatchQueue.main.async { [weak self] in
-            self?.webSocketTask = nil
-            self?.reconnectTimer?.invalidate()
-            self?.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-                print("Reconnecting to log server...")
-                self?.connect()
-            }
-        }
-    }
-
-    // MARK: - URLSessionWebSocketDelegate
-
-    public func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        print("Connected to log server")
-    }
-
-    public func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "Unknown"
-        print("Disconnected from log server: \(reasonString). Reconnecting...")
-        scheduleReconnect()
-    }
-}
-
-// MARK: - WebSocket Manager
-
-public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
-    @Published var isConnected = false
-
-    private var webSocketTask: URLSessionWebSocketTask?
-    private var session: URLSession?
-    private let projectName: String
-    private var reconnectTimer: Timer?
-    private var config: AgenteractConfig?
-
-    public init(projectName: String) {
-        self.projectName = projectName
-        super.init()
-
-        // Load saved config
-        self.config = ConfigStorage.shared.load()
-
-        let configuration = URLSessionConfiguration.default
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: OperationQueue())
-
-        connect()
-    }
-
-    public func updateConfig(_ newConfig: AgenteractConfig) {
-        self.config = newConfig
         ConfigStorage.shared.save(config: newConfig)
 
         // Reconnect with new config
@@ -406,11 +259,13 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
         let host: String
         let port: Int
         let token: String?
+        let deviceId: String?
 
         if let savedConfig = config {
             host = savedConfig.host
             port = savedConfig.port
             token = savedConfig.token
+            deviceId = savedConfig.deviceId
             print("[Agenteract] Using saved config: \(host):\(port)")
         } else {
             // No saved config - check if we're on simulator
@@ -424,6 +279,7 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
                 host = "127.0.0.1"
                 port = 8765
                 token = nil
+                deviceId = nil
                 print("[Agenteract] Simulator detected. Connecting to localhost...")
             } else {
                 // Physical device - don't auto-connect
@@ -432,10 +288,17 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
             }
         }
 
-        // Build URL with token if available
+        // Build URL with token and deviceId if available
         var urlString = "ws://\(host):\(port)/\(projectName)"
+        var params: [String] = []
         if let token = token {
-            urlString += "?token=\(token)"
+            params.append("token=\(token)")
+        }
+        if let deviceId = deviceId {
+            params.append("deviceId=\(deviceId)")
+        }
+        if !params.isEmpty {
+            urlString += "?" + params.joined(separator: "&")
         }
 
         guard let url = URL(string: urlString) else {
@@ -483,7 +346,35 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
 
     private func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
-              let command = try? JSONDecoder().decode(AgentCommand.self, from: data) else {
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("Failed to parse message")
+            return
+        }
+
+        // Check if this is a server welcome message with device ID
+        if let status = json["status"] as? String, status == "connected",
+           let deviceId = json["deviceId"] as? String {
+            print("[Agenteract] Received device ID from server: \(deviceId)")
+
+            // Store device ID in config (create config if it doesn't exist)
+            var updatedConfig: AgenteractConfig
+            if var currentConfig = self.config {
+                // Update existing config
+                currentConfig.deviceId = deviceId
+                updatedConfig = currentConfig
+            } else {
+                // Create new config with device ID
+                updatedConfig = AgenteractConfig(host: "127.0.0.1", port: 8765, token: nil, deviceId: deviceId)
+            }
+
+            self.config = updatedConfig
+            ConfigStorage.shared.save(config: updatedConfig)
+            print("[Agenteract] Stored device ID for future connections")
+            return
+        }
+
+        // Try to decode as command
+        guard let command = try? JSONDecoder().decode(AgentCommand.self, from: data) else {
             print("Failed to decode command")
             sendResponse(AgentResponse(status: "error", error: "Invalid command format"))
             return
@@ -564,6 +455,15 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
         }
     }
 
+    private func sendLogEntry(_ entry: LogEntry) {
+        let response = AgentResponse(
+            id: nil,
+            status: "log",
+            logs: [entry]
+        )
+        sendResponse(response)
+    }
+
     private func scheduleReconnect() {
         DispatchQueue.main.async { [weak self] in
             self?.isConnected = false
@@ -572,6 +472,8 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
             self?.reconnectTimer?.invalidate()
             self?.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
                 print("Reconnecting to agent server...")
+                // Reload config from storage to pick up any saved device ID
+                self?.config = ConfigStorage.shared.load()
                 self?.connect()
             }
         }
@@ -1030,12 +932,10 @@ class ViewHierarchyInspector {
 public struct AgentDebugBridge: View {
     let projectName: String
     @StateObject private var webSocketManager: AgentWebSocketManager
-    @StateObject private var logSocketManager: AgentLogSocketManager
 
     public init(projectName: String) {
         self.projectName = projectName
         _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName))
-        _logSocketManager = StateObject(wrappedValue: AgentLogSocketManager(projectName: projectName))
     }
 
     public var body: some View {
@@ -1045,7 +945,6 @@ public struct AgentDebugBridge: View {
             }
             .onDisappear {
                 webSocketManager.disconnect()
-                logSocketManager.disconnect()
             }
     }
 
