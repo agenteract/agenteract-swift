@@ -119,7 +119,7 @@ class ConfigStorage {
     func save(config: AgenteractConfig) {
         if let data = try? JSONEncoder().encode(config) {
             UserDefaults.standard.set(data, forKey: key)
-            print("[Agenteract] Config saved: \(config.host):\(config.port)")
+            print("[Agenteract] Config saved: \(sanitizeForLog(config))")
         }
     }
 
@@ -128,8 +128,19 @@ class ConfigStorage {
               let config = try? JSONDecoder().decode(AgenteractConfig.self, from: data) else {
             return nil
         }
-        print("[Agenteract] Loaded config: \(config.host):\(config.port)")
+        print("[Agenteract] Loaded config: \(sanitizeForLog(config))")
         return config
+    }
+
+    private func sanitizeForLog(_ config: AgenteractConfig) -> String {
+        var result = "host: \(config.host), port: \(config.port)"
+        if config.token != nil {
+            result += ", token: ****"
+        }
+        if let deviceId = config.deviceId {
+            result += ", deviceId: \(deviceId)"
+        }
+        return result
     }
 }
 
@@ -266,13 +277,17 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
             port = savedConfig.port
             token = savedConfig.token
             deviceId = savedConfig.deviceId
-            print("[Agenteract] Using saved config: \(host):\(port)")
+            var logMsg = "host: \(host), port: \(port)"
+            if token != nil {
+                logMsg += ", token: ****"
+            }
+            if let deviceId = deviceId {
+                logMsg += ", deviceId: \(deviceId)"
+            }
+            print("[Agenteract] Using saved config: \(logMsg)")
         } else {
             // No saved config - check if we're on simulator
             let deviceInfo = DeviceInfoProvider.getDeviceInfo()
-            print("[Agenteract] DEBUG: isSimulator = \(deviceInfo.isSimulator)")
-            print("[Agenteract] DEBUG: deviceName = \(deviceInfo.deviceName)")
-            print("[Agenteract] DEBUG: deviceModel = \(deviceInfo.deviceModel)")
 
             if deviceInfo.isSimulator {
                 // Simulator - use localhost
