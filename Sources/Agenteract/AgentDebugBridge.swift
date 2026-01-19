@@ -946,10 +946,12 @@ class ViewHierarchyInspector {
 
 public struct AgentDebugBridge: View {
     let projectName: String
+    let onDeepLink: ((URL) -> Bool)?
     @StateObject private var webSocketManager: AgentWebSocketManager
 
-    public init(projectName: String) {
+    public init(projectName: String, onDeepLink: ((URL) -> Bool)? = nil) {
         self.projectName = projectName
+        self.onDeepLink = onDeepLink
         _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName))
     }
 
@@ -965,6 +967,15 @@ public struct AgentDebugBridge: View {
 
     private func handleDeepLink(_ url: URL) {
         print("[Agenteract] Received deep link: \(url)")
+
+        // Call custom deep link handler first if provided
+        if let handler = onDeepLink {
+            let handled = handler(url)
+            if handled {
+                print("[Agenteract] Deep link handled by app")
+                return
+            }
+        }
 
         // Check if this is an agenteract config link
         // Supports: myapp://agenteract/config?host=...&port=...&token=...

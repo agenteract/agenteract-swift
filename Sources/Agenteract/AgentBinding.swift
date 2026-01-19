@@ -89,12 +89,29 @@ struct ScrollViewIntrospector: UIViewRepresentable {
         override func didMoveToWindow() {
             super.didMoveToWindow()
 
-            guard let testID = testID, scrollViewProxy != nil else { return }
+            guard let testID = testID else { return }
 
-            // Find the UIScrollView in the parent hierarchy
-            // Use a small delay to allow the view hierarchy to fully layout
+            // First, set accessibilityIdentifier on the immediate parent view
+            // This ensures the testID propagates to the UIKit layer for all views
             DispatchQueue.main.async {
-                self.attemptToFindScrollView(testID: testID, retryCount: 0)
+                self.setAccessibilityOnParent(testID: testID)
+            }
+
+            // If there's a scrollViewProxy, also find and configure the ScrollView
+            if scrollViewProxy != nil {
+                // Find the UIScrollView in the parent hierarchy
+                // Use a small delay to allow the view hierarchy to fully layout
+                DispatchQueue.main.async {
+                    self.attemptToFindScrollView(testID: testID, retryCount: 0)
+                }
+            }
+        }
+
+        private func setAccessibilityOnParent(testID: String) {
+            // Set accessibilityIdentifier on the parent view to ensure
+            // the testID is available in the UIKit hierarchy
+            if let parent = self.superview {
+                parent.accessibilityIdentifier = testID
             }
         }
         
