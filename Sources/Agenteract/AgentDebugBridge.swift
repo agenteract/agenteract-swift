@@ -193,6 +193,7 @@ struct AgentCommand: Codable {
     let direction: String?
     let amount: Double?
     let velocity: String?
+    let payload: String?
 }
 
 struct AgentResponse: Codable {
@@ -235,9 +236,11 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
     private let projectName: String
     private var reconnectTimer: Timer?
     private var config: AgenteractConfig?
+    private let onDeepLink: ((URL) -> Bool)?
 
-    public init(projectName: String) {
+    public init(projectName: String, onDeepLink: ((URL) -> Bool)? = nil) {
         self.projectName = projectName
+        self.onDeepLink = onDeepLink
         super.init()
 
         // Load saved config
@@ -252,6 +255,55 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
         }
 
         connect()
+    }
+
+    public func handleDeepLink(_ url: URL) {
+        print("[Agenteract] Received deep link: \(url)")
+
+        // Call custom deep link handler first if provided
+        if let handler = onDeepLink {
+            let handled = handler(url)
+            if handled {
+                print("[Agenteract] Deep link handled by app")
+                return
+            }
+        }
+
+        // Check if this is an agenteract config link
+        // Supports: myapp://agenteract/config?host=...&port=...&token=...
+        guard url.pathComponents.contains("agenteract"),
+              url.pathComponents.contains("config") else {
+            return
+        }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            print("[Agenteract] Failed to parse deep link URL")
+            return
+        }
+
+        var host: String?
+        var port: Int?
+        var token: String?
+
+        for item in queryItems {
+            switch item.name {
+            case "host": host = item.value
+            case "port": port = Int(item.value ?? "")
+            case "token": token = item.value
+            default: break
+            }
+        }
+
+        guard let host = host, let port = port else {
+            print("[Agenteract] Missing required parameters in deep link")
+            return
+        }
+
+        let config = AgenteractConfig(host: host, port: port, token: token)
+        updateConfig(config)
+
+        print("[Agenteract] Config updated from deep link")
     }
 
     public func updateConfig(_ newConfig: AgenteractConfig) {
@@ -450,6 +502,18 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
             let velocity = command.velocity ?? "medium"
             let success = simulateSwipe(testID: testID, direction: direction, velocity: velocity)
             return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+
+        case "agentLink":
+            guard let payload = command.payload else {
+                return AgentResponse(id: command.id, status: "error", error: "Missing payload", action: command.action)
+            }
+            if let url = URL(string: payload) {
+                // Call handleDeepLink directly
+                self.handleDeepLink(url)
+                return AgentResponse(id: command.id, status: "ok", action: command.action)
+            } else {
+                return AgentResponse(id: command.id, status: "error", error: "Invalid URL", action: command.action)
+            }
 
         default:
             return AgentResponse(id: command.id, status: "error", error: "Unknown action: \(command.action)", action: command.action)
@@ -946,71 +1010,20 @@ class ViewHierarchyInspector {
 
 public struct AgentDebugBridge: View {
     let projectName: String
-    let onDeepLink: ((URL) -> Bool)?
     @StateObject private var webSocketManager: AgentWebSocketManager
 
     public init(projectName: String, onDeepLink: ((URL) -> Bool)? = nil) {
         self.projectName = projectName
-        self.onDeepLink = onDeepLink
-        _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName))
+        _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName, onDeepLink: onDeepLink))
     }
 
     public var body: some View {
         EmptyView()
             .onOpenURL { url in
-                handleDeepLink(url)
+                webSocketManager.handleDeepLink(url)
             }
             .onDisappear {
                 webSocketManager.disconnect()
             }
-    }
-
-    private func handleDeepLink(_ url: URL) {
-        print("[Agenteract] Received deep link: \(url)")
-
-        // Call custom deep link handler first if provided
-        if let handler = onDeepLink {
-            let handled = handler(url)
-            if handled {
-                print("[Agenteract] Deep link handled by app")
-                return
-            }
-        }
-
-        // Check if this is an agenteract config link
-        // Supports: myapp://agenteract/config?host=...&port=...&token=...
-        guard url.pathComponents.contains("agenteract"),
-              url.pathComponents.contains("config") else {
-            return
-        }
-
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else {
-            print("[Agenteract] Failed to parse deep link URL")
-            return
-        }
-
-        var host: String?
-        var port: Int?
-        var token: String?
-
-        for item in queryItems {
-            switch item.name {
-            case "host": host = item.value
-            case "port": port = Int(item.value ?? "")
-            case "token": token = item.value
-            default: break
-            }
-        }
-
-        guard let host = host, let port = port else {
-            print("[Agenteract] Missing required parameters in deep link")
-            return
-        }
-
-        let config = AgenteractConfig(host: host, port: port, token: token)
-        webSocketManager.updateConfig(config)
-
-        print("[Agenteract] Config updated from deep link")
     }
 }
