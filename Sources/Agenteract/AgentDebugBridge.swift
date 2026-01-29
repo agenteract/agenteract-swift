@@ -236,11 +236,11 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
     private let projectName: String
     private var reconnectTimer: Timer?
     private var config: AgenteractConfig?
-    private let onDeepLink: ((URL) -> Bool)?
+    private let onAgentLink: ((URL) -> Bool)?
 
-    public init(projectName: String, onDeepLink: ((URL) -> Bool)? = nil) {
+    public init(projectName: String, onAgentLink: ((URL) -> Bool)? = nil) {
         self.projectName = projectName
-        self.onDeepLink = onDeepLink
+        self.onAgentLink = onAgentLink
         super.init()
 
         // Load saved config
@@ -257,14 +257,14 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
         connect()
     }
 
-    public func handleDeepLink(_ url: URL) {
-        print("[Agenteract] Received deep link: \(url)")
+    public func handleAgentLink(_ url: URL) {
+        print("[Agenteract] Received agent link: \(url)")
 
-        // Call custom deep link handler first if provided
-        if let handler = onDeepLink {
+        // Call custom agent link handler first if provided
+        if let handler = onAgentLink {
             let handled = handler(url)
             if handled {
-                print("[Agenteract] Deep link handled by app")
+                print("[Agenteract] agentLink handled by app")
                 return
             }
         }
@@ -278,7 +278,7 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
 
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let queryItems = components.queryItems else {
-            print("[Agenteract] Failed to parse deep link URL")
+            print("[Agenteract] Failed to parse agentLink URL")
             return
         }
 
@@ -296,14 +296,14 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
         }
 
         guard let host = host, let port = port else {
-            print("[Agenteract] Missing required parameters in deep link")
+            print("[Agenteract] Missing required parameters in agentLink")
             return
         }
 
         let config = AgenteractConfig(host: host, port: port, token: token)
         updateConfig(config)
 
-        print("[Agenteract] Config updated from deep link")
+        print("[Agenteract] Config updated from agentLink")
     }
 
     public func updateConfig(_ newConfig: AgenteractConfig) {
@@ -508,8 +508,8 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
                 return AgentResponse(id: command.id, status: "error", error: "Missing payload", action: command.action)
             }
             if let url = URL(string: payload) {
-                // Call handleDeepLink directly
-                self.handleDeepLink(url)
+                // Call handleAgentLink directly
+                self.handleAgentLink(url)
                 return AgentResponse(id: command.id, status: "ok", action: command.action)
             } else {
                 return AgentResponse(id: command.id, status: "error", error: "Invalid URL", action: command.action)
@@ -1012,15 +1012,15 @@ public struct AgentDebugBridge: View {
     let projectName: String
     @StateObject private var webSocketManager: AgentWebSocketManager
 
-    public init(projectName: String, onDeepLink: ((URL) -> Bool)? = nil) {
+    public init(projectName: String, onAgentLink: ((URL) -> Bool)? = nil) {
         self.projectName = projectName
-        _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName, onDeepLink: onDeepLink))
+        _webSocketManager = StateObject(wrappedValue: AgentWebSocketManager(projectName: projectName, onAgentLink: onAgentLink))
     }
 
     public var body: some View {
         EmptyView()
             .onOpenURL { url in
-                webSocketManager.handleDeepLink(url)
+                webSocketManager.handleAgentLink(url)
             }
             .onDisappear {
                 webSocketManager.disconnect()
