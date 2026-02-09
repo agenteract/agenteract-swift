@@ -275,7 +275,7 @@ export default {
   projects: [
     {
       name: 'your-app-name',
-      type: 'swift',
+      type: 'xcode',
       // ... other configuration
     }
   ]
