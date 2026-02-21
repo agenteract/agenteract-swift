@@ -470,38 +470,48 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
             guard let testID = command.testID else {
                 return AgentResponse(id: command.id, status: "error", error: "Missing testID", action: command.action)
             }
-            let success = simulateTap(testID: testID)
-            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+            if let error = simulateTap(testID: testID) {
+                return AgentResponse(id: command.id, status: "error", error: error, action: command.action)
+            }
+            return AgentResponse(id: command.id, status: "ok", action: command.action)
 
         case "input":
             guard let testID = command.testID, let value = command.value else {
                 return AgentResponse(id: command.id, status: "error", error: "Missing testID or value", action: command.action)
             }
-            let success = simulateInput(testID: testID, value: value)
-            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+            if let error = simulateInput(testID: testID, value: value) {
+                return AgentResponse(id: command.id, status: "error", error: error, action: command.action)
+            }
+            return AgentResponse(id: command.id, status: "ok", action: command.action)
 
         case "longPress":
             guard let testID = command.testID else {
                 return AgentResponse(id: command.id, status: "error", error: "Missing testID", action: command.action)
             }
-            let success = simulateLongPress(testID: testID)
-            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+            if let error = simulateLongPress(testID: testID) {
+                return AgentResponse(id: command.id, status: "error", error: error, action: command.action)
+            }
+            return AgentResponse(id: command.id, status: "ok", action: command.action)
 
         case "scroll":
             guard let testID = command.testID, let direction = command.direction else {
                 return AgentResponse(id: command.id, status: "error", error: "Missing testID or direction", action: command.action)
             }
             let amount = command.amount ?? 100.0
-            let success = simulateScroll(testID: testID, direction: direction, amount: amount)
-            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+            if let error = simulateScroll(testID: testID, direction: direction, amount: amount) {
+                return AgentResponse(id: command.id, status: "error", error: error, action: command.action)
+            }
+            return AgentResponse(id: command.id, status: "ok", action: command.action)
 
         case "swipe":
             guard let testID = command.testID, let direction = command.direction else {
                 return AgentResponse(id: command.id, status: "error", error: "Missing testID or direction", action: command.action)
             }
             let velocity = command.velocity ?? "medium"
-            let success = simulateSwipe(testID: testID, direction: direction, velocity: velocity)
-            return AgentResponse(id: command.id, status: success ? "ok" : "error", action: command.action)
+            if let error = simulateSwipe(testID: testID, direction: direction, velocity: velocity) {
+                return AgentResponse(id: command.id, status: "error", error: error, action: command.action)
+            }
+            return AgentResponse(id: command.id, status: "ok", action: command.action)
 
         case "agentLink":
             guard let payload = command.payload else {
@@ -589,58 +599,56 @@ public class AgentWebSocketManager: NSObject, ObservableObject, URLSessionWebSoc
 
 // MARK: - Simulation Functions
 
+/// Returns nil on success, or a descriptive error string on failure.
 @MainActor
-func simulateTap(testID: String) -> Bool {
+func simulateTap(testID: String) -> String? {
     guard let node = AgentRegistry.shared.getNode(testID: testID) else {
-        print("simulateTap: No node found for testID \"\(testID)\"")
-        return false
+        return "No element found with testID \"\(testID)\""
     }
 
-    if let onTap = node.onTap {
-        onTap()
-        return true
+    guard let onTap = node.onTap else {
+        return "Element \"\(testID)\" has no onTap handler"
     }
 
-    print("simulateTap: No onTap handler found for testID \"\(testID)\"")
-    return false
+    onTap()
+    return nil
 }
 
+/// Returns nil on success, or a descriptive error string on failure.
 @MainActor
-func simulateInput(testID: String, value: String) -> Bool {
+func simulateInput(testID: String, value: String) -> String? {
     guard let node = AgentRegistry.shared.getNode(testID: testID) else {
-        print("simulateInput: No node found for testID \"\(testID)\"")
-        return false
+        return "No element found with testID \"\(testID)\""
     }
 
-    if let onChangeText = node.onChangeText {
-        onChangeText(value)
-        return true
+    guard let onChangeText = node.onChangeText else {
+        return "Element \"\(testID)\" has no onChangeText handler"
     }
 
-    print("simulateInput: No onChangeText handler found for testID \"\(testID)\"")
-    return false
+    onChangeText(value)
+    return nil
 }
 
+/// Returns nil on success, or a descriptive error string on failure.
 @MainActor
-func simulateLongPress(testID: String) -> Bool {
+func simulateLongPress(testID: String) -> String? {
     guard let node = AgentRegistry.shared.getNode(testID: testID) else {
-        print("simulateLongPress: No node found for testID \"\(testID)\"")
-        return false
+        return "No element found with testID \"\(testID)\""
     }
 
-    if let onLongPress = node.onLongPress {
-        onLongPress()
-        return true
+    guard let onLongPress = node.onLongPress else {
+        return "Element \"\(testID)\" has no onLongPress handler"
     }
 
-    print("simulateLongPress: No onLongPress handler found for testID \"\(testID)\"")
-    return false
+    onLongPress()
+    return nil
 }
 
+/// Returns nil on success, or a descriptive error string on failure.
 @MainActor
-func simulateScroll(testID: String, direction: String, amount: Double) -> Bool {
+func simulateScroll(testID: String, direction: String, amount: Double) -> String? {
     guard var node = AgentRegistry.shared.getNode(testID: testID) else {
-        return false
+        return "No element found with testID \"\(testID)\""
     }
 
     // Try to get the UIScrollView from the stored reference
@@ -653,8 +661,7 @@ func simulateScroll(testID: String, direction: String, amount: Double) -> Bool {
     }
 
     guard let scrollView = scrollView else {
-        print("simulateScroll: ERROR - No UIScrollView found for testID \"\(testID)\"")
-        return false
+        return "Element \"\(testID)\" has no UIScrollView attached"
     }
 
     // Calculate relative scroll offset
@@ -677,7 +684,7 @@ func simulateScroll(testID: String, direction: String, amount: Double) -> Bool {
     scrollView.setContentOffset(newOffset, animated: true)
 
     print("simulateScroll: Scrolled from (\(currentOffset.x), \(currentOffset.y)) to (\(newOffset.x), \(newOffset.y))")
-    return true
+    return nil
 }
 
 // Helper function to find UIScrollView in the view hierarchy
@@ -747,17 +754,17 @@ private func containsTestID(_ testID: String, in view: UIView) -> Bool {
     return false
 }
 
+/// Returns nil on success, or a descriptive error string on failure.
 @MainActor
-func simulateSwipe(testID: String, direction: String, velocity: String) -> Bool {
+func simulateSwipe(testID: String, direction: String, velocity: String) -> String? {
     guard let node = AgentRegistry.shared.getNode(testID: testID) else {
-        print("simulateSwipe: No node found for testID \"\(testID)\"")
-        return false
+        return "No element found with testID \"\(testID)\""
     }
 
     // First check if there's an explicit onSwipe handler
     if let onSwipe = node.onSwipe {
         onSwipe(direction, velocity)
-        return true
+        return nil
     }
 
     // Fallback: if it's a scrollable view without explicit swipe handler,
@@ -768,8 +775,7 @@ func simulateSwipe(testID: String, direction: String, velocity: String) -> Bool 
         return simulateScroll(testID: testID, direction: direction, amount: distance)
     }
 
-    print("simulateSwipe: No swipe handler or scroll support found for testID \"\(testID)\"")
-    return false
+    return "Element \"\(testID)\" has no swipe handler and does not support scrollTo"
 }
 
 // MARK: - View Hierarchy Inspector
